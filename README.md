@@ -1,103 +1,126 @@
 # RerankRAG-Rocketseat
 
-Este projeto implementa um sistema de busca semântica (RAG – Retrieval-Augmented Generation) com LangChain, OpenAI, Cohere e ChromaDB.
-Com ele, é possível carregar um PDF, dividir o texto em partes (chunks), criar embeddings vetoriais e realizar perguntas para obter respostas precisas com base no conteúdo do documento.
-Além disso, o projeto utiliza compressão contextual e reranking para refinar os resultados e melhorar a relevância das respostas.
+Este projeto implementa um **sistema de busca semântica (RAG – Retrieval-Augmented Generation)** com **LangChain**, **OpenAI**, **Cohere** e **ChromaDB**.  
+Com ele, é possível **carregar um PDF**, **dividir o texto em partes (chunks)**, **criar embeddings vetoriais** e **realizar perguntas** para obter respostas precisas com base no conteúdo do documento.  
+Além disso, o projeto utiliza **reranking (CohereRerank)** e **compressão contextual** para refinar os resultados.
 
-Tecnologias Utilizadas
+---
 
-LangChain — Framework para orquestração de LLMs
+##  Tecnologias Utilizadas
 
-OpenAI API — Geração de embeddings e respostas
+-  **LangChain** — Framework para orquestração de LLMs  
+-  **OpenAI API** — Geração de embeddings e respostas  
+-  **Cohere API** — Reclassificação (rerank) e compressão contextual  
+-  **ChromaDB** — Banco de vetores para busca semântica  
+-  **PyPDFLoader** — Leitura e extração de conteúdo de PDFs  
 
-Cohere API — Reclassificação e compressão contextual
+---
 
-ChromaDB — Banco de vetores para busca semântica
+## Instalação
 
-PyPDFLoader — Leitura e extração de conteúdo de PDFs
+###  Clone o repositório
+- git clone https://github.com/seuusuario/CompressionRAG-LangChain.git  
+- cd CompressionRAG-LangChain  
 
-Instalação
-Clone o repositório
+###  Crie um ambiente virtual
+- python -m venv .venv  
+- .venv\Scripts\activate    # Windows  
+- source .venv/bin/activate # Linux/Mac  
 
-git clone https://github.com/seuusuario/seurepositorio.git
+### Instale as dependências
+- pip install -r requirements.txt  
 
-cd seurepositorio
+---
 
-Crie um ambiente virtual
+## Configuração das Chaves de API
 
-python -m venv .venv
+Antes de executar o projeto, defina suas chaves no ambiente ou diretamente no código:
 
-.venv\Scripts\activate # Windows
+- os.environ["OPENAI_API_KEY"] = "sua_chave_openai_aqui"  
+- os.environ["COHERE_API_KEY"] = "sua_chave_cohere_aqui"  
 
-source .venv/bin/activate # Linux/Mac
+---
 
-Instale as dependências
+## Como Funciona o Código
 
-pip install -r requirements.txt
+### Carregamento do PDF
 
-Configuração das Chaves de API
+- pdf = PyPDFLoader(file_path = "Seu PDF", extract_images = False)  
+- pages = pdf.load_and_split()  
 
-Antes de executar o projeto, defina suas chaves no código:
+---
 
-os.environ["OPENAI_API_KEY"] = "sua_chave_openai_aqui"
+### Divisão dos textos
 
-os.environ["COHERE_API_KEY"] = "sua_chave_cohere_aqui"
+- O texto é dividido em partes menores (chunks) para facilitar o processamento e indexação:
 
-Como Funciona o Código
-Carregamento do PDF
+    - text_spliter: pequenos/longos trechos (chunk_size = 4000, chunk_overlap = 20, add_start_index = True)
 
-pdf = PyPDFLoader(file_path = "Seu PDF", extract_images = False)
+    - chunk = text_spliter.split_documents(pages)
 
-pages = pdf.load_and_split()
+---
 
-Divisão dos textos
+### Criação do Vetorstore e Retriever
 
-O texto é dividido em partes menores (chunks) para facilitar o processamento:
+- Os textos divididos são transformados em vetores e armazenados em um DB local:
 
-text_spliter = RecursiveCharacterTextSplitter(
-    chunk_size = 4000,
-    chunk_overlap = 20,
-    length_function = len,
-    add_start_index = True
-)
-chunk = text_spliter.split_documents(pages)
+- embeddings_model = OpenAIEmbeddings(model = "text-embeddings-3-small")  
+- vectorDB = Chroma(embedding_function = embeddings_model, persist_directory = "naiveDB")  
+- naive_retriever = vectorDB.as_retriever(kwargs = {"k": 10})
 
-Criação do Vetorstore e Retriever
+---
 
-Os textos divididos são transformados em vetores e armazenados em uma base local:
+### Reranking e Compressão Contextual
 
-embeddings_model = OpenAIEmbeddings(model = "text-embeddings-3-small")
-vectorDB = Chroma(embedding_function = embeddings_model, persist_directory = "naiveDB")
-naive_retriever = vectorDB.as_retriever(kwargs = {"k": 10})
+- O CohereRerank é usado para reordenar os resultados mais relevantes e, junto com o ContextualCompressionRetriever, reduzir o contexto ao essencial:
 
-Reranking e Compressão Contextual
+- rerank = CohereRerank(model = "rerank-v3.5", top_n = 3)  
 
-O CohereRerank é utilizado para reordenar e comprimir os resultados mais relevantes:
+- compression_retriever = ContextualCompressionRetriever(  
+    base_compressor = rerank,  
+    base_retriever = naive_retriever  
+  )
 
-rerank = CohereRerank(model = "rerank-v3.5", top_n = 3)
+---
 
-compression_retriever = ContextualCompressionRetriever(
-    base_compressor = rerank,
-    base_retriever = naive_retriever
-)
+### Criação do Prompt e Execução da Query
 
-Criação do Prompt e Execução da Query
+- setup_retrieval = RunnableParallel({"question": RunnablePassthrough(), "context": compression_retriever})  
 
-Um template é criado para estruturar a interação entre o modelo e o contexto do documento:
+- TEMPLATE = """
+  Sua especificação do que o agente de ia é...
+  
+  Querry:
+  {question}
+  
+  Context:
+  {context}
+  """
 
-TEMPLATE = """
-Sua especificação do que o agente de ia é...
+- reg_prompt = ChatPromptTemplate.from_template(TEMPLATE)  
+- output_parser = StrOutputParser()  
+- compression_retrieval_chain = setup_retrieval | reg_prompt | llm | output_parser  
 
-Query:
-{question}
+- compression_retrieval_chain.invoke("Faça sua pergunta...")
 
-Context:
-{context}
-"""
+---
 
+### Exemplo de Uso
 
-O prompt é combinado com o modelo e o retriever para formar a cadeia de execução:
+- compression_retrieval_chain.invoke("Quais são os principais tópicos abordados neste PDF?")  
 
-reg_prompt = ChatPromptTemplate.from_template(TEMPLATE)
-compression_retrieval_chain = setup_retrieval | reg_prompt | llm | output_parser
-compression_retrieval_chain.invoke("Faça sua pergunta...")
+---
+
+## Estrutura do Projeto
+
+- main.py — Código principal do projeto  
+- requirements.txt — Lista de dependências  
+- README.md — Documentação do repositório  
+- naiveDB — Banco de vetores local (criado automaticamente ao persistir o Chroma)
+
+---
+
+## Licença
+
+Este projeto está sob a licença **MIT** – sinta-se livre para usar, modificar e distribuir.
+
